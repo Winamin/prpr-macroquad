@@ -370,7 +370,7 @@ struct PipelinesStorage {
 }
 
 impl PipelinesStorage {
-    const MAX_PIPELINES: usize = 32;
+    const MAX_PIPELINES: usize = 64;
     const TRIANGLES_PIPELINE: GlPipeline = GlPipeline(0);
     const LINES_PIPELINE: GlPipeline = GlPipeline(1);
     const TRIANGLES_DEPTH_PIPELINE: GlPipeline = GlPipeline(2);
@@ -389,8 +389,9 @@ impl PipelinesStorage {
             ..Default::default()
         };
 
+        const PIPELINE_NONE: Option<PipelineExt> = None;
         let mut storage = PipelinesStorage {
-            pipelines: Default::default(),
+            pipelines: [PIPELINE_NONE; Self::MAX_PIPELINES],
             pipelines_amount: 0,
         };
 
@@ -825,7 +826,7 @@ impl QuadGl {
     }
 
     pub fn geometry(&mut self, vertices: &[impl Into<VertexInterop> + Copy], indices: &[u16]) {
-        if vertices.len() >= self.max_vertices || indices.len() >= self.max_indices {
+        if vertices.len() > self.max_vertices || indices.len() > self.max_indices {
             warn!("geometry() exceeded max drawcall size, clamping");
         }
 
