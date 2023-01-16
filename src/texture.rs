@@ -595,7 +595,7 @@ impl Texture2D {
     pub fn grab_screen(&self) {
         use miniquad::*;
 
-        let (internal_format, _, _) = self.texture.format.into();
+        let (internal_format, _, _) = self.texture.format.into_gl_params(false);
         unsafe {
             gl::glBindTexture(gl::GL_TEXTURE_2D, self.texture.gl_internal_id());
             gl::glCopyTexImage2D(
