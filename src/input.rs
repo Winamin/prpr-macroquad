@@ -31,6 +31,7 @@ pub struct Touch {
     pub id: u64,
     pub phase: TouchPhase,
     pub position: Vec2,
+    pub time: f64,
 }
 
 /// Constrain mouse to window
