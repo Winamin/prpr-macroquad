@@ -1,5 +1,7 @@
 //! Window and associated to window rendering context related functions.
 
+use std::backtrace::Backtrace;
+
 use crate::{get_context, get_quad_context};
 
 use crate::color::Color;
@@ -116,10 +118,7 @@ where
 {
     std::panic::set_hook(Box::new(move |info| {
         let message = format!("{:?}", info);
-        #[cfg(feature = "backtrace")]
-        let backtrace_string = format!("{:?}", backtrace::Backtrace::new());
-        #[cfg(not(feature = "backtrace"))]
-        let backtrace_string = format!("Macroquad compiled without \"backtrace\" feature");
+        let backtrace_string = format!("{:?}", Backtrace::capture());
         crate::logging::error!("{}", message);
         crate::logging::error!("{}", backtrace_string);
 
