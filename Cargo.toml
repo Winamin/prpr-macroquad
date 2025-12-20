@@ -28,13 +28,12 @@ all-features = true
 [dependencies]
 # miniquad = { version = "=0.3.14", features = ["log-impl"] }
 miniquad = { git = "https://github.com/Mivik/prpr-miniquad.git", features = ["log-impl"] }
-quad-rand = "0.2.1"
-glam = {version = "0.21", features = ["scalar-math"] }
-image = { version = "0.24", default-features = false, features = ["png", "tga"] }
+quad-rand = "0.2.3"
+glam = {version = "0.30", features = ["scalar-math"] }
+image = { version = "0.25", default-features = false, features = ["png", "tga"] }
 macroquad_macro = { version = "0.1.7", path = "macroquad_macro" }
-fontdue = "0.7"
-bumpalo = "3.4"
-backtrace = { version = "0.3.60", optional = true, default-features = false, features = [ "std", "libbacktrace" ] }
+fontdue = "0.9"
+bumpalo = "3.18"
 log = { version = "0.4", optional = true }
 quad-snd = { version = "0.2", optional = true }
 

@@ -1,5 +1,7 @@
 //! Window and associated to window rendering context related functions.
 
+use std::backtrace::Backtrace;
+
 use crate::{get_context, get_quad_context};
 
 use crate::color::Color;
@@ -78,6 +80,11 @@ pub fn request_new_screen_size(width: f32, height: f32) {
     // Because the OS might decide to give a different screen dimension, setting the context.screen_* here would be confusing.
 }
 
+/// Toggle whether the window is fullscreen.
+pub fn set_fullscreen(fullscreen: bool) {
+    get_quad_context().set_fullscreen(fullscreen);
+}
+
 /// With `set_panic_handler` set to a handler code, macroquad will use
 /// `std::panic::catch_unwind` on user code to catch some panics.
 ///
@@ -116,10 +123,7 @@ where
 {
     std::panic::set_hook(Box::new(move |info| {
         let message = format!("{:?}", info);
-        #[cfg(feature = "backtrace")]
-        let backtrace_string = format!("{:?}", backtrace::Backtrace::new());
-        #[cfg(not(feature = "backtrace"))]
-        let backtrace_string = format!("Macroquad compiled without \"backtrace\" feature");
+        let backtrace_string = format!("{:?}", Backtrace::capture());
         crate::logging::error!("{}", message);
         crate::logging::error!("{}", backtrace_string);
 
