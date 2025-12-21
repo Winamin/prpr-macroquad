@@ -30,7 +30,7 @@ all-features = true
 miniquad = { git = "https://github.com/Mivik/prpr-miniquad.git", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = {version = "0.30", features = ["scalar-math"] }
-image = { version = "0.25", default-features = false, features = ["png", "tga"] }
+image = { version = "0.25", default-features = false, features = ["png", "tga", "jpeg"] }
 macroquad_macro = { version = "0.1.7", path = "macroquad_macro" }
 fontdue = "0.9"
 bumpalo = "3.18"
