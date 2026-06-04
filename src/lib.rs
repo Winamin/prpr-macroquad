@@ -45,6 +45,7 @@ use std::pin::Pin;
 
 mod exec;
 mod quad_gl;
+mod shader_version;
 
 pub mod audio;
 pub mod camera;

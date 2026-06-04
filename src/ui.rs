@@ -1270,12 +1270,16 @@ pub(crate) mod ui_context {
         pub(crate) fn draw(&mut self, _ctx: &mut miniquad::Context, quad_gl: &mut QuadGl) {
             // TODO: this belongs to new and waits for cleaning up context initialization mess
             let material = self.material.get_or_insert_with(|| {
-                let fragment_shader = FRAGMENT_SHADER.to_string();
-                let vertex_shader = VERTEX_SHADER.to_string();
+                // 检测支持的着色器版本
+                use crate::shader_version::ShaderVersion;
+                let shader_version = ShaderVersion::detect(_ctx);
+
+                // 根据版本获取对应的着色器
+                let (vertex_shader, fragment_shader) = ui_shader::get_shaders(shader_version);
 
                 load_material(
-                    &vertex_shader,
-                    &fragment_shader,
+                    vertex_shader,
+                    fragment_shader,
                     MaterialParams {
                         pipeline_params: PipelineParams {
                             color_blend: Some(BlendState::new(
@@ -1348,7 +1352,19 @@ pub(crate) mod ui_context {
         }
     }
 
-    const VERTEX_SHADER: &'static str = "#version 100
+    mod ui_shader {
+        use crate::shader_version::ShaderVersion;
+
+        pub fn get_shaders(version: ShaderVersion) -> (&'static str, &'static str) {
+            match version {
+                ShaderVersion::GL100 => (VERTEX_100, FRAGMENT_100),
+                ShaderVersion::GL300 => (VERTEX_300, FRAGMENT_300),
+                ShaderVersion::GL400 => (VERTEX_400, FRAGMENT_400),
+            }
+        }
+
+        // OpenGL ES 2.0 / WebGL 1.0
+        const VERTEX_100: &'static str = "#version 100
 attribute vec3 position;
 attribute vec4 color0;
 attribute vec2 texcoord;
@@ -1366,7 +1382,7 @@ void main() {
     color = color0 / 255.0;
 }
 ";
-    const FRAGMENT_SHADER: &'static str = "#version 100
+        const FRAGMENT_100: &'static str = "#version 100
 varying lowp vec2 uv;
 varying lowp vec4 color;
 
@@ -1376,4 +1392,71 @@ void main() {
     gl_FragColor = texture2D(Texture, uv) * color;
 }
 ";
+
+        // OpenGL ES 3.0 / WebGL 2.0
+        const VERTEX_300: &'static str = "#version 300 es
+in vec3 position;
+in vec4 color0;
+in vec2 texcoord;
+
+out vec2 uv;
+out vec2 pos;
+out vec4 color;
+
+uniform mat4 Model;
+uniform mat4 Projection;
+
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1);
+    uv = texcoord;
+    color = color0 / 255.0;
+}
+";
+        const FRAGMENT_300: &'static str = "#version 300 es
+precision mediump float;
+
+in vec2 uv;
+in vec4 color;
+
+uniform sampler2D Texture;
+
+out vec4 fragColor;
+
+void main() {
+    fragColor = texture(Texture, uv) * color;
+}
+";
+
+        // OpenGL 4.0+
+        const VERTEX_400: &'static str = "#version 400 core
+in vec3 position;
+in vec4 color0;
+in vec2 texcoord;
+
+out vec2 uv;
+out vec2 pos;
+out vec4 color;
+
+uniform mat4 Model;
+uniform mat4 Projection;
+
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1);
+    uv = texcoord;
+    color = color0 / 255.0;
+}
+";
+        const FRAGMENT_400: &'static str = "#version 400 core
+in vec2 uv;
+in vec4 color;
+
+uniform sampler2D Texture;
+
+out vec4 fragColor;
+
+void main() {
+    fragColor = texture(Texture, uv) * color;
+}
+";
+    }
 }

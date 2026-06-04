@@ -15,6 +15,10 @@ readme="README.md"
 audio = ["quad-snd"]
 log-rs = ["log"]
 default = ["audio"]
+# OpenGL 版本控制
+gl-legacy = []          
+gl-30 = []
+gl-40 = []
 
 [package.metadata.android]
 assets = "examples/"

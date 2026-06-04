@@ -4,7 +4,7 @@ use miniquad::*;
 
 pub use miniquad::{FilterMode, ShaderError};
 
-use crate::{color::Color, logging::warn, telemetry, texture::Texture2D};
+use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, shader_version::ShaderVersion};
 
 use std::collections::BTreeMap;
 
@@ -141,8 +141,18 @@ struct MagicSnapshotter {
 
 mod snapshotter_shader {
     use miniquad::{ShaderMeta, UniformBlockLayout};
+    use crate::shader_version::ShaderVersion;
 
-    pub const VERTEX: &str = r#"#version 100
+    pub fn get_shaders(version: ShaderVersion) -> (&'static str, &'static str) {
+        match version {
+            ShaderVersion::GL100 => (VERTEX_100, FRAGMENT_100),
+            ShaderVersion::GL300 => (VERTEX_300, FRAGMENT_300),
+            ShaderVersion::GL400 => (VERTEX_400, FRAGMENT_400),
+        }
+    }
+
+    // OpenGL ES 2.0 / WebGL 1.0
+    pub const VERTEX_100: &str = r#"#version 100
     attribute vec2 position;
     attribute vec2 texcoord;
 
@@ -153,13 +163,61 @@ mod snapshotter_shader {
         uv = texcoord;
     }"#;
 
-    pub const FRAGMENT: &str = r#"#version 100
+    pub const FRAGMENT_100: &str = r#"#version 100
     varying lowp vec2 uv;
 
     uniform sampler2D Texture;
 
     void main() {
         gl_FragColor = texture2D(Texture, uv);
+    }"#;
+
+    // OpenGL ES 3.0 / WebGL 2.0
+    pub const VERTEX_300: &str = r#"#version 300 es
+    in vec2 position;
+    in vec2 texcoord;
+
+    out vec2 uv;
+
+    void main() {
+        gl_Position = vec4(position, 0, 1);
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_300: &str = r#"#version 300 es
+    precision mediump float;
+
+    in vec2 uv;
+
+    uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = texture(Texture, uv);
+    }"#;
+
+    // OpenGL 4.0+
+    pub const VERTEX_400: &str = r#"#version 400 core
+    in vec2 position;
+    in vec2 texcoord;
+
+    out vec2 uv;
+
+    void main() {
+        gl_Position = vec4(position, 0, 1);
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_400: &str = r#"#version 400 core
+    in vec2 uv;
+
+    uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = texture(Texture, uv);
     }"#;
 
     pub fn meta() -> ShaderMeta {
@@ -176,10 +234,16 @@ mod snapshotter_shader {
 
 impl MagicSnapshotter {
     fn new(ctx: &mut Context) -> MagicSnapshotter {
+        // 检测支持的着色器版本
+        let shader_version = ShaderVersion::detect(ctx);
+
+        // 根据版本获取对应的着色器
+        let (vertex_shader, fragment_shader) = snapshotter_shader::get_shaders(shader_version);
+
         let shader = Shader::new(
             ctx,
-            snapshotter_shader::VERTEX,
-            snapshotter_shader::FRAGMENT,
+            vertex_shader,
+            fragment_shader,
             snapshotter_shader::meta(),
         )
         .unwrap_or_else(|e| panic!("Failed to load shader: {}", e));
@@ -376,7 +440,13 @@ impl PipelinesStorage {
     const LINES_DEPTH_PIPELINE: GlPipeline = GlPipeline(3);
 
     fn new(ctx: &mut miniquad::Context) -> PipelinesStorage {
-        let shader = Shader::new(ctx, shader::VERTEX, shader::FRAGMENT, shader::meta())
+        // 检测支持的着色器版本
+        let shader_version = ShaderVersion::detect(ctx);
+
+        // 根据版本获取对应的着色器
+        let (vertex_shader, fragment_shader) = shader::get_shaders(shader_version);
+
+        let shader = Shader::new(ctx, vertex_shader, fragment_shader, shader::meta())
             .unwrap_or_else(|e| panic!("Failed to load shader: {}", e));
 
         let params = PipelineParams {
@@ -972,8 +1042,18 @@ impl QuadGl {
 
 mod shader {
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
+    use crate::shader_version::ShaderVersion;
 
-    pub const VERTEX: &str = r#"#version 100
+    pub fn get_shaders(version: ShaderVersion) -> (&'static str, &'static str) {
+        match version {
+            ShaderVersion::GL100 => (VERTEX_100, FRAGMENT_100),
+            ShaderVersion::GL300 => (VERTEX_300, FRAGMENT_300),
+            ShaderVersion::GL400 => (VERTEX_400, FRAGMENT_400),
+        }
+    }
+
+    // OpenGL ES 2.0 / WebGL 1.0
+    pub const VERTEX_100: &str = r#"#version 100
     attribute vec3 position;
     attribute vec2 texcoord;
     attribute vec4 color0;
@@ -990,7 +1070,7 @@ mod shader {
         uv = texcoord;
     }"#;
 
-    pub const FRAGMENT: &str = r#"#version 100
+    pub const FRAGMENT_100: &str = r#"#version 100
     varying lowp vec4 color;
     varying lowp vec2 uv;
 
@@ -998,6 +1078,68 @@ mod shader {
 
     void main() {
         gl_FragColor = color * texture2D(Texture, uv) ;
+    }"#;
+
+    // OpenGL ES 3.0 / WebGL 2.0
+    pub const VERTEX_300: &str = r#"#version 300 es
+    in vec3 position;
+    in vec2 texcoord;
+    in vec4 color0;
+
+    out vec2 uv;
+    out vec4 color;
+
+    uniform mat4 Model;
+    uniform mat4 Projection;
+
+    void main() {
+        gl_Position = Projection * Model * vec4(position, 1);
+        color = color0 / 255.0;
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_300: &str = r#"#version 300 es
+    precision mediump float;
+
+    in vec2 uv;
+    in vec4 color;
+
+    uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = color * texture(Texture, uv);
+    }"#;
+
+    // OpenGL 4.0+
+    pub const VERTEX_400: &str = r#"#version 400 core
+    in vec3 position;
+    in vec2 texcoord;
+    in vec4 color0;
+
+    out vec2 uv;
+    out vec4 color;
+
+    uniform mat4 Model;
+    uniform mat4 Projection;
+
+    void main() {
+        gl_Position = Projection * Model * vec4(position, 1);
+        color = color0 / 255.0;
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_400: &str = r#"#version 400 core
+    in vec2 uv;
+    in vec4 color;
+
+    uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = color * texture(Texture, uv);
     }"#;
 
     pub fn uniforms() -> Vec<(&'static str, UniformType)> {
