@@ -82,29 +82,40 @@ impl Image {
 
     /// Creates an Image filled with the provided [Color].
     pub fn gen_image_color(width: u16, height: u16, color: Color) -> Image {
-        let mut bytes = vec![0; width as usize * height as usize * 4];
-        for i in 0..width as usize * height as usize {
-            bytes[i * 4 + 0] = (color.r * 255.) as u8;
-            bytes[i * 4 + 1] = (color.g * 255.) as u8;
-            bytes[i * 4 + 2] = (color.b * 255.) as u8;
-            bytes[i * 4 + 3] = (color.a * 255.) as u8;
+        let pixel_count = width as usize * height as usize;
+        let mut bytes = Vec::with_capacity(pixel_count * 4);
+
+        bytes.extend_from_slice(&[
+            (color.r * 255.) as u8,
+            (color.g * 255.) as u8,
+            (color.b * 255.) as u8,
+            (color.a * 255.) as u8,
+        ]);
+        while bytes.len() < bytes.capacity() {
+            let remaining = bytes.capacity() - bytes.len();
+            let copy_len = remaining.min(bytes.len());
+            let to_copy = bytes[..copy_len].to_vec();
+            bytes.extend_from_slice(&to_copy);
         }
-        Image {
-            width,
-            height,
-            bytes,
-        }
+        Image { width, height, bytes }
     }
 
     /// Updates this image from a slice of [Color]s.
     pub fn update(&mut self, colors: &[Color]) {
         assert!(self.width as usize * self.height as usize == colors.len());
-
+        let target_len = colors.len() * 4;
+        if self.bytes.len() != target_len {
+            self.bytes.resize(target_len, 0);
+        }
         for i in 0..colors.len() {
-            self.bytes[i * 4] = (colors[i].r * 255.) as u8;
-            self.bytes[i * 4 + 1] = (colors[i].g * 255.) as u8;
-            self.bytes[i * 4 + 2] = (colors[i].b * 255.) as u8;
-            self.bytes[i * 4 + 3] = (colors[i].a * 255.) as u8;
+            let offset = i * 4;
+            let color = colors[i];
+            self.bytes[offset..offset + 4].copy_from_slice(&[
+                (color.r * 255.) as u8,
+                (color.g * 255.) as u8,
+                (color.b * 255.) as u8,
+                (color.a * 255.) as u8,
+            ]);
         }
     }
 
@@ -160,16 +171,23 @@ impl Image {
         let height = rect.h as usize;
         let mut bytes = vec![0; width * height * 4];
 
-        let x = rect.x as usize;
-        let y = rect.y as usize;
-        let mut n = 0;
-        for y in y..y + height {
-            for x in x..x + width {
-                bytes[n] = self.bytes[y * self.width as usize * 4 + x * 4 + 0];
-                bytes[n + 1] = self.bytes[y * self.width as usize * 4 + x * 4 + 1];
-                bytes[n + 2] = self.bytes[y * self.width as usize * 4 + x * 4 + 2];
-                bytes[n + 3] = self.bytes[y * self.width as usize * 4 + x * 4 + 3];
-                n += 4;
+        let x_start = rect.x as usize;
+        let y_start = rect.y as usize;
+        let src_stride = self.width as usize * 4;
+        let dst_stride = width * 4;
+        unsafe {
+            let src_ptr = self.bytes.as_ptr();
+            let dst_ptr = bytes.as_mut_ptr();
+
+            for y in 0..height {
+                let src_offset = (y_start + y) * src_stride + x_start * 4;
+                let dst_offset = y * dst_stride;
+
+                std::ptr::copy_nonoverlapping(
+                    src_ptr.add(src_offset),
+                    dst_ptr.add(dst_offset),
+                    dst_stride,
+                );
             }
         }
         Image {
@@ -181,24 +199,34 @@ impl Image {
 
     /// Saves this image as a PNG file.
     pub fn export_png(&self, path: &str) {
-        let mut bytes = vec![0; self.width as usize * self.height as usize * 4];
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let mut bytes = vec![0; width * height * 4];
+        let row_len = width * 4;
 
-        // flip the image before saving
-        for y in 0..self.height as usize {
-            for x in 0..self.width as usize * 4 {
-                bytes[y * self.width as usize * 4 + x] =
-                    self.bytes[(self.height as usize - y - 1) * self.width as usize * 4 + x];
+        unsafe {
+            let src_ptr = self.bytes.as_ptr();
+            let dst_ptr = bytes.as_mut_ptr();
+
+            for y in 0..height {
+                let src_row = (height - y - 1) * row_len;
+                let dst_row = y * row_len;
+
+                std::ptr::copy_nonoverlapping(
+                    src_ptr.add(src_row),
+                    dst_ptr.add(dst_row),
+                    row_len,
+                );
             }
         }
 
         image::save_buffer(
             path,
-            &bytes[..],
+            &bytes,
             self.width as _,
             self.height as _,
             image::ColorType::Rgba8,
-        )
-        .unwrap();
+        ).unwrap();
     }
 }
 
@@ -304,84 +332,83 @@ pub fn draw_texture_ex(
     params: DrawTextureParams,
 ) {
     let context = get_context();
+    let gl = &mut context.gl;
+    let batcher = &mut context.texture_batcher;
 
-    let Rect {
-        x: mut sx,
-        y: mut sy,
-        w: mut sw,
-        h: mut sh,
-    } = params.source.unwrap_or(Rect {
-        x: 0.,
-        y: 0.,
-        w: texture.width(),
-        h: texture.height(),
-    });
+    let tex_w = texture.width();
+    let tex_h = texture.height();
+
+    let Rect { x: mut sx, y: mut sy, w: mut sw, h: mut sh } =
+        params.source.unwrap_or(Rect { x: 0., y: 0., w: tex_w, h: tex_h });
 
     let mut texture = texture;
 
-    if let Some((batched_texture, uv)) = context.texture_batcher.get(texture) {
-        sx = ((sx / texture.width()) * uv.w + uv.x) * batched_texture.width();
-        sy = ((sy / texture.height()) * uv.h + uv.y) * batched_texture.height();
-        sw = (sw / texture.width()) * uv.w * batched_texture.width();
-        sh = (sh / texture.height()) * uv.h * batched_texture.height();
+    if let Some((batched_texture, uv)) = batcher.get(texture) {
+        let batch_w = batched_texture.width();
+        let batch_h = batched_texture.height();
+
+        sx = ((sx / tex_w) * uv.w + uv.x) * batch_w;
+        sy = ((sy / tex_h) * uv.h + uv.y) * batch_h;
+        sw = (sw / tex_w) * uv.w * batch_w;
+        sh = (sh / tex_h) * uv.h * batch_h;
 
         texture = batched_texture;
     }
 
-    let (mut w, mut h) = match params.dest_size {
-        Some(dst) => (dst.x, dst.y),
-        _ => (sw, sh),
-    };
-    let mut x = x;
-    let mut y = y;
+    let (sin_r, cos_r) = params.rotation.sin_cos();
+
+    let (mut w, mut h) = params.dest_size
+        .map(|dst| (dst.x, dst.y))
+        .unwrap_or((sw, sh));
+
+    let (mut draw_x, mut draw_y) = (x, y);
     if params.flip_x {
-        x = x + w;
+        draw_x += w;
         w = -w;
     }
     if params.flip_y {
-        y = y + h;
+        draw_y += h;
         h = -h;
     }
 
-    let pivot = params.pivot.unwrap_or(vec2(x + w / 2., y + h / 2.));
-    let m = pivot;
-    let p = [
-        vec2(x, y) - pivot,
-        vec2(x + w, y) - pivot,
-        vec2(x + w, y + h) - pivot,
-        vec2(x, y + h) - pivot,
-    ];
-    let r = params.rotation;
-    let p = [
-        vec2(
-            p[0].x * r.cos() - p[0].y * r.sin(),
-            p[0].x * r.sin() + p[0].y * r.cos(),
-        ) + m,
-        vec2(
-            p[1].x * r.cos() - p[1].y * r.sin(),
-            p[1].x * r.sin() + p[1].y * r.cos(),
-        ) + m,
-        vec2(
-            p[2].x * r.cos() - p[2].y * r.sin(),
-            p[2].x * r.sin() + p[2].y * r.cos(),
-        ) + m,
-        vec2(
-            p[3].x * r.cos() - p[3].y * r.sin(),
-            p[3].x * r.sin() + p[3].y * r.cos(),
-        ) + m,
-    ];
-    #[rustfmt::skip]
-    let vertices = [
-        Vertex::new(p[0].x, p[0].y, 0.,  sx      /texture.width(),  sy      /texture.height(), color),
-        Vertex::new(p[1].x, p[1].y, 0., (sx + sw)/texture.width(),  sy      /texture.height(), color),
-        Vertex::new(p[2].x, p[2].y, 0., (sx + sw)/texture.width(), (sy + sh)/texture.height(), color),
-        Vertex::new(p[3].x, p[3].y, 0.,  sx      /texture.width(), (sy + sh)/texture.height(), color),
-    ];
-    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    use glam::Mat2;
+    let pivot = params.pivot.unwrap_or(vec2(draw_x + w / 2., draw_y + h / 2.));
+    let rot = Mat2::from_angle(params.rotation);
 
-    context.gl.texture(Some(texture));
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&vertices, &indices);
+    let corners = [
+        vec2(draw_x, draw_y),
+        vec2(draw_x + w, draw_y),
+        vec2(draw_x + w, draw_y + h),
+        vec2(draw_x, draw_y + h),
+    ];
+
+    let positions: [Vec2; 4] = [
+        rot * (corners[0] - pivot) + pivot,
+        rot * (corners[1] - pivot) + pivot,
+        rot * (corners[2] - pivot) + pivot,
+        rot * (corners[3] - pivot) + pivot,
+    ];
+
+    let tex_w = texture.width();
+    let tex_h = texture.height();
+    let uv = [
+        (sx / tex_w, sy / tex_h),
+        ((sx + sw) / tex_w, sy / tex_h),
+        ((sx + sw) / tex_w, (sy + sh) / tex_h),
+        (sx / tex_w, (sy + sh) / tex_h),
+    ];
+
+    let vertices = [
+        Vertex::new(positions[0].x, positions[0].y, 0., uv[0].0, uv[0].1, color),
+        Vertex::new(positions[1].x, positions[1].y, 0., uv[1].0, uv[1].1, color),
+        Vertex::new(positions[2].x, positions[2].y, 0., uv[2].0, uv[2].1, color),
+        Vertex::new(positions[3].x, positions[3].y, 0., uv[3].0, uv[3].1, color),
+    ];
+
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    gl.texture(Some(texture));
+    gl.draw_mode(DrawMode::Triangles);
+    gl.geometry(&vertices, &indices);
 }
 
 #[deprecated(since = "0.3.0", note = "Use draw_texture_ex instead")]
