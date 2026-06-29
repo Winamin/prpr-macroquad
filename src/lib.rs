@@ -195,7 +195,6 @@ struct Context {
 
     camera_stack: Vec<camera::CameraState>,
     texture_batcher: texture::Batcher,
-    sprite_batcher: texture::SpriteBatcher,
     unwind: bool,
     recovery_future: Option<Pin<Box<dyn Future<Output = ()>>>>,
 }
@@ -304,7 +303,6 @@ impl Context {
             ui_context: UiContext::new(ctx, screen_width, screen_height),
             fonts_storage: text::FontsStorage::new(ctx),
             texture_batcher: texture::Batcher::new(ctx),
-            sprite_batcher: texture::SpriteBatcher::new(),
             camera_stack: vec![],
 
             audio_context: audio::AudioContext::new(),
@@ -338,7 +336,6 @@ impl Context {
         crate::experimental::scene::update();
 
         self.perform_render_passes();
-        self.sprite_batcher.flush(&mut self.gl);
 
         self.ui_context.draw(get_quad_context(), &mut self.gl);
         let screen_mat = self.pixel_perfect_projection_matrix();

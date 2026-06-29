@@ -9,7 +9,6 @@ use crate::{
 
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
-use std::collections::HashMap;
 
 pub use crate::quad_gl::FilterMode;
 
@@ -21,13 +20,6 @@ pub struct Image {
     pub height: u16,
 }
 
-#[derive(Clone, Copy)]
-struct SpriteDrawData {
-    positions: [Vec2; 4],
-    uv: [(f32, f32); 4],
-    color: Color,
-}
-
 impl std::fmt::Debug for Image {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Image")
@@ -35,66 +27,6 @@ impl std::fmt::Debug for Image {
             .field("height", &self.height)
             .field("bytes.len()", &self.bytes.len())
             .finish()
-    }
-}
-
-pub(crate) struct SpriteBatcher { batches: HashMap<u32, (miniquad::Texture, Vec<SpriteDrawData>)>, }
-
-impl SpriteBatcher {
-    pub fn new() -> Self {
-        Self {
-            batches: HashMap::new(),
-        }
-    }
-
-    pub fn add_sprite(&mut self, texture: Texture2D, data: SpriteDrawData) {
-        let raw = texture.raw_miniquad_texture_handle();
-        let key = raw.gl_internal_id();
-        self.batches
-            .entry(key)
-            .or_insert_with(|| (raw, Vec::new()))
-            .1
-            .push(data);
-    }
-
-    pub fn flush(&mut self, gl: &mut crate::quad_gl::QuadGl) {
-        let mut all_vertices = Vec::new();
-        let mut all_indices = Vec::new();
-
-        for (_key, (texture, sprites)) in self.batches.drain() {
-            all_vertices.clear();
-            all_indices.clear();
-
-            for sprite in &sprites {
-                let base_index = all_vertices.len() as u16;
-
-                all_vertices.push(Vertex::new(
-                    sprite.positions[0].x, sprite.positions[0].y, 0.,
-                    sprite.uv[0].0, sprite.uv[0].1, sprite.color
-                ));
-                all_vertices.push(Vertex::new(
-                    sprite.positions[1].x, sprite.positions[1].y, 0.,
-                    sprite.uv[1].0, sprite.uv[1].1, sprite.color
-                ));
-                all_vertices.push(Vertex::new(
-                    sprite.positions[2].x, sprite.positions[2].y, 0.,
-                    sprite.uv[2].0, sprite.uv[2].1, sprite.color
-                ));
-                all_vertices.push(Vertex::new(
-                    sprite.positions[3].x, sprite.positions[3].y, 0.,
-                    sprite.uv[3].0, sprite.uv[3].1, sprite.color
-                ));
-                all_indices.extend_from_slice(&[
-                    base_index, base_index + 1, base_index + 2,
-                    base_index, base_index + 2, base_index + 3,
-                ]);
-            }
-            if !all_vertices.is_empty() {
-                gl.texture(Some(Texture2D::from_miniquad_texture(texture)));
-                gl.draw_mode(DrawMode::Triangles);
-                gl.geometry(&all_vertices, &all_indices);
-            }
-        }
     }
 }
 
@@ -152,19 +84,19 @@ impl Image {
     pub fn gen_image_color(width: u16, height: u16, color: Color) -> Image {
         let pixel_count = width as usize * height as usize;
         let mut bytes = Vec::with_capacity(pixel_count * 4);
-        let color_bytes = [
+
+        bytes.extend_from_slice(&[
             (color.r * 255.) as u8,
             (color.g * 255.) as u8,
             (color.b * 255.) as u8,
             (color.a * 255.) as u8,
-        ];
-        bytes.extend_from_slice(&color_bytes);
+        ]);
         while bytes.len() < bytes.capacity() {
             let remaining = bytes.capacity() - bytes.len();
             let copy_len = remaining.min(bytes.len());
-            bytes.extend_from_within(..copy_len);
+            let to_copy = bytes[..copy_len].to_vec();
+            bytes.extend_from_slice(&to_copy);
         }
-
         Image { width, height, bytes }
     }
 
@@ -175,13 +107,15 @@ impl Image {
         if self.bytes.len() != target_len {
             self.bytes.resize(target_len, 0);
         }
-
-        // 使用迭代器处理，利于自动向量化
-        for (chunk, color) in self.bytes.chunks_exact_mut(4).zip(colors.iter()) {
-            chunk[0] = (color.r * 255.) as u8;
-            chunk[1] = (color.g * 255.) as u8;
-            chunk[2] = (color.b * 255.) as u8;
-            chunk[3] = (color.a * 255.) as u8;
+        for i in 0..colors.len() {
+            let offset = i * 4;
+            let color = colors[i];
+            self.bytes[offset..offset + 4].copy_from_slice(&[
+                (color.r * 255.) as u8,
+                (color.g * 255.) as u8,
+                (color.b * 255.) as u8,
+                (color.a * 255.) as u8,
+            ]);
         }
     }
 
@@ -398,7 +332,8 @@ pub fn draw_texture_ex(
     params: DrawTextureParams,
 ) {
     let context = get_context();
-    let batcher = &mut context.sprite_batcher;
+    let gl = &mut context.gl;
+    let batcher = &mut context.texture_batcher;
 
     let tex_w = texture.width();
     let tex_h = texture.height();
@@ -408,7 +343,7 @@ pub fn draw_texture_ex(
 
     let mut texture = texture;
 
-    if let Some((batched_texture, uv)) = context.texture_batcher.get(texture) {
+    if let Some((batched_texture, uv)) = batcher.get(texture) {
         let batch_w = batched_texture.width();
         let batch_h = batched_texture.height();
 
@@ -422,13 +357,11 @@ pub fn draw_texture_ex(
 
     let (sin_r, cos_r) = params.rotation.sin_cos();
 
-    let (mut w, mut h) = params
-        .dest_size
+    let (mut w, mut h) = params.dest_size
         .map(|dst| (dst.x, dst.y))
         .unwrap_or((sw, sh));
 
-    let mut draw_x = x;
-    let mut draw_y = y;
+    let (mut draw_x, mut draw_y) = (x, y);
     if params.flip_x {
         draw_x += w;
         w = -w;
@@ -438,23 +371,22 @@ pub fn draw_texture_ex(
         h = -h;
     }
 
-    let pivot = params
-        .pivot
-        .unwrap_or_else(|| vec2(draw_x + w / 2., draw_y + h / 2.));
+    use glam::Mat2;
+    let pivot = params.pivot.unwrap_or(vec2(draw_x + w / 2., draw_y + h / 2.));
+    let rot = Mat2::from_angle(params.rotation);
 
-    let rotate = |v: Vec2| -> Vec2 {
-        let rel = v - pivot;
-        vec2(
-            cos_r * rel.x - sin_r * rel.y + pivot.x,
-            sin_r * rel.x + cos_r * rel.y + pivot.y,
-        )
-    };
+    let corners = [
+        vec2(draw_x, draw_y),
+        vec2(draw_x + w, draw_y),
+        vec2(draw_x + w, draw_y + h),
+        vec2(draw_x, draw_y + h),
+    ];
 
-    let positions = [
-        rotate(vec2(draw_x, draw_y)),
-        rotate(vec2(draw_x + w, draw_y)),
-        rotate(vec2(draw_x + w, draw_y + h)),
-        rotate(vec2(draw_x, draw_y + h)),
+    let positions: [Vec2; 4] = [
+        rot * (corners[0] - pivot) + pivot,
+        rot * (corners[1] - pivot) + pivot,
+        rot * (corners[2] - pivot) + pivot,
+        rot * (corners[3] - pivot) + pivot,
     ];
 
     let tex_w = texture.width();
@@ -466,11 +398,17 @@ pub fn draw_texture_ex(
         (sx / tex_w, (sy + sh) / tex_h),
     ];
 
-    batcher.add_sprite(texture, SpriteDrawData {
-        positions,
-        uv,
-        color,
-    });
+    let vertices = [
+        Vertex::new(positions[0].x, positions[0].y, 0., uv[0].0, uv[0].1, color),
+        Vertex::new(positions[1].x, positions[1].y, 0., uv[1].0, uv[1].1, color),
+        Vertex::new(positions[2].x, positions[2].y, 0., uv[2].0, uv[2].1, color),
+        Vertex::new(positions[3].x, positions[3].y, 0., uv[3].0, uv[3].1, color),
+    ];
+
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    gl.texture(Some(texture));
+    gl.draw_mode(DrawMode::Triangles);
+    gl.geometry(&vertices, &indices);
 }
 
 #[deprecated(since = "0.3.0", note = "Use draw_texture_ex instead")]
@@ -727,7 +665,6 @@ impl Texture2D {
 pub(crate) struct Batcher {
     unbatched: Vec<Texture2D>,
     atlas: crate::text::atlas::Atlas,
-    uv_cache: HashMap<u32, Rect>,
 }
 
 impl Batcher {
@@ -735,7 +672,6 @@ impl Batcher {
         Batcher {
             unbatched: vec![],
             atlas: crate::text::atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
-            uv_cache: HashMap::new(),
         }
     }
 
@@ -745,8 +681,9 @@ impl Batcher {
 
     pub fn get(&mut self, texture: Texture2D) -> Option<(Texture2D, Rect)> {
         let id = texture.raw_miniquad_texture_handle().gl_internal_id();
-        let uv_rect = self.uv_cache.get(&(id as u32))?;
-        Some((self.atlas.texture(), *uv_rect))
+        let uv_rect = self.atlas.get_uv_rect(id as _)?;
+
+        Some((self.atlas.texture(), uv_rect))
     }
 }
 
@@ -760,11 +697,9 @@ pub fn build_textures_atlas() {
 
     for texture in context.texture_batcher.unbatched.drain(0..) {
         let sprite: Image = texture.get_texture_data();
-        let id = texture.raw_miniquad_texture_handle().gl_internal_id() as u32;
+        let id = texture.raw_miniquad_texture_handle().gl_internal_id();
 
         context.texture_batcher.atlas.cache_sprite(id as _, sprite);
-        let uv_rect = context.texture_batcher.atlas.get_uv_rect(id as _).unwrap();
-        context.texture_batcher.uv_cache.insert(id, uv_rect);
     }
 
     let texture = context.texture_batcher.atlas.texture();
