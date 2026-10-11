@@ -104,18 +104,13 @@ impl Image {
     pub fn update(&mut self, colors: &[Color]) {
         assert!(self.width as usize * self.height as usize == colors.len());
         let target_len = colors.len() * 4;
-        if self.bytes.len() != target_len {
-            self.bytes.resize(target_len, 0);
-        }
-        for i in 0..colors.len() {
-            let offset = i * 4;
-            let color = colors[i];
-            self.bytes[offset..offset + 4].copy_from_slice(&[
-                (color.r * 255.) as u8,
-                (color.g * 255.) as u8,
-                (color.b * 255.) as u8,
-                (color.a * 255.) as u8,
-            ]);
+        if self.bytes.len() != target_len { self.bytes.resize(target_len, 0); }
+        for (color, chunk) in colors.iter().zip(self.bytes.chunks_mut(4))
+        {
+            chunk[0] = (color.r * 255.) as u8;
+            chunk[1] = (color.g * 255.) as u8;
+            chunk[2] = (color.b * 255.) as u8;
+            chunk[3] = (color.a * 255.) as u8;
         }
     }
 
@@ -132,7 +127,6 @@ impl Image {
     /// Returns this image's data as a slice of 4-byte arrays.
     pub fn get_image_data(&self) -> &[[u8; 4]] {
         use std::slice;
-
         unsafe {
             slice::from_raw_parts(
                 self.bytes.as_ptr() as *const [u8; 4],
@@ -144,7 +138,6 @@ impl Image {
     /// Returns this image's data as a mutable slice of 4-byte arrays.
     pub fn get_image_data_mut(&mut self) -> &mut [[u8; 4]] {
         use std::slice;
-
         unsafe {
             slice::from_raw_parts_mut(
                 self.bytes.as_mut_ptr() as *mut [u8; 4],
@@ -175,7 +168,8 @@ impl Image {
         let y_start = rect.y as usize;
         let src_stride = self.width as usize * 4;
         let dst_stride = width * 4;
-        unsafe {
+        unsafe
+        {
             let src_ptr = self.bytes.as_ptr();
             let dst_ptr = bytes.as_mut_ptr();
 
@@ -183,11 +177,13 @@ impl Image {
                 let src_offset = (y_start + y) * src_stride + x_start * 4;
                 let dst_offset = y * dst_stride;
 
-                std::ptr::copy_nonoverlapping(
+                std::ptr::copy_nonoverlapping
+                (
                     src_ptr.add(src_offset),
                     dst_ptr.add(dst_offset),
                     dst_stride,
                 );
+
             }
         }
         Image {
