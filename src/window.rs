@@ -55,6 +55,10 @@ pub unsafe fn get_internal_gl<'a>() -> InternalGlContext<'a> {
     }
 }
 
+pub fn miniquad_context() -> &'static mut crate::miniquad::Context {
+    get_quad_context()
+}
+
 pub fn screen_width() -> f32 {
     let context = get_context();
 

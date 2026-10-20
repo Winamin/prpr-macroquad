@@ -644,7 +644,7 @@ impl Texture2D {
             bytes: vec![0; self.texture.width as usize * self.texture.height as usize * 4],
         };
 
-        self.texture.read_pixels(&mut image.bytes);
+        self.texture.read_pixels(get_quad_context(), &mut image.bytes);
 
         image
     }
@@ -654,7 +654,7 @@ impl Texture2D {
     /// Using a deleted texture could give different results on different
     /// platforms and is not recommended.
     pub fn delete(&self) {
-        self.raw_miniquad_texture_handle().delete()
+        self.raw_miniquad_texture_handle().delete(get_quad_context())
     }
 }
 

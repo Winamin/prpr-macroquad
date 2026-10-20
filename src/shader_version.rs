@@ -5,10 +5,13 @@ pub enum ShaderVersion {
     GL100, // OpenGL ES 2.0 / WebGL 1.0
     GL300, // OpenGL ES 3.0 / WebGL 2.0
     GL400, // OpenGL 4.0+
+    Vulkan, // Vulkan / GLSL 4.50
 }
 
 impl ShaderVersion {
-    pub fn detect(_ctx: &Context) -> Self {
+    pub fn detect(ctx: &Context) -> Self {
+        if ctx.rendering_backend() == miniquad::conf::RenderingBackend::Vulkan { return ShaderVersion::Vulkan; }
+
         #[cfg(feature = "gl-40")]
         {
             if cfg!(not(target_arch = "wasm32"))
@@ -31,6 +34,7 @@ impl ShaderVersion {
             ShaderVersion::GL100 => "#version 100",
             ShaderVersion::GL300 => "#version 300 es",
             ShaderVersion::GL400 => "#version 400 core",
+            ShaderVersion::Vulkan => "#version 450 core",
         }
     }
 
@@ -52,7 +56,7 @@ impl ShaderVersion {
                 texture_array: true,
                 instancing: true,
             },
-            ShaderVersion::GL400 => ShaderFeatures {
+            ShaderVersion::GL400 | ShaderVersion::Vulkan => ShaderFeatures {
                 ubo: true,
                 ssbo: true,
                 compute: true,

@@ -148,6 +148,7 @@ mod snapshotter_shader {
             ShaderVersion::GL100 => (VERTEX_100, FRAGMENT_100),
             ShaderVersion::GL300 => (VERTEX_300, FRAGMENT_300),
             ShaderVersion::GL400 => (VERTEX_400, FRAGMENT_400),
+            ShaderVersion::Vulkan => (VERTEX_VULKAN, FRAGMENT_VULKAN),
         }
     }
 
@@ -213,6 +214,29 @@ mod snapshotter_shader {
     in vec2 uv;
 
     uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = texture(Texture, uv);
+    }"#;
+
+    // Vulkan
+    pub const VERTEX_VULKAN: &str = r#"#version 450 core
+    layout(location = 0) in vec2 position;
+    layout(location = 1) in vec2 texcoord;
+
+    out vec2 uv;
+
+    void main() {
+        gl_Position = vec4(position, 0, 1);
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_VULKAN: &str = r#"#version 450 core
+    in vec2 uv;
+
+    layout(set = 0, binding = 1) uniform sampler2D Texture;
 
     out vec4 fragColor;
 
@@ -1049,6 +1073,7 @@ mod shader {
             ShaderVersion::GL100 => (VERTEX_100, FRAGMENT_100),
             ShaderVersion::GL300 => (VERTEX_300, FRAGMENT_300),
             ShaderVersion::GL400 => (VERTEX_400, FRAGMENT_400),
+            ShaderVersion::Vulkan => (VERTEX_VULKAN, FRAGMENT_VULKAN),
         }
     }
 
@@ -1135,6 +1160,39 @@ mod shader {
     in vec4 color;
 
     uniform sampler2D Texture;
+
+    out vec4 fragColor;
+
+    void main() {
+        fragColor = color * texture(Texture, uv);
+    }"#;
+
+    pub const VERTEX_VULKAN: &str = r#"#version 450 core
+    layout(location = 0) in vec3 position;
+    layout(location = 1) in vec2 texcoord;
+    layout(location = 2) in uvec4 color0;
+
+    layout(set = 0, binding = 0) uniform Uniforms {
+        mat4 Projection;
+        mat4 Model;
+        vec4 _Time;
+    };
+
+    out vec2 uv;
+    out vec4 color;
+
+    void main() {
+        gl_Position = Projection * Model * vec4(position, 1);
+        color = vec4(color0) / 255.0;
+        uv = texcoord;
+    }"#;
+
+    pub const FRAGMENT_VULKAN: &str = r#"#version 450 core
+    in vec2 uv;
+    in vec4 color;
+
+    layout(set = 0, binding = 1) uniform sampler2D Texture;
+    layout(set = 0, binding = 2) uniform sampler2D _ScreenTexture;
 
     out vec4 fragColor;
 
