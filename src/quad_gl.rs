@@ -852,6 +852,7 @@ impl QuadGl {
             dc.indices_count = 0;
         }
 
+        ctx.flush_draw_commands();
         self.draw_calls_count = 0;
     }
 
