@@ -272,6 +272,7 @@ impl Context {
     fn new(ctx: &mut QuadContext) -> Context {
         let (screen_width, screen_height) = ctx.screen_size();
 
+        let pc_assets_folder = take_pending_pc_assets_folder();
         Context {
             screen_width,
             screen_height,
@@ -308,7 +309,7 @@ impl Context {
             audio_context: audio::AudioContext::new(),
             coroutines_context: experimental::coroutines::CoroutinesContext::new(),
 
-            pc_assets_folder: None,
+            pc_assets_folder,
 
             start_time: miniquad::date::now(),
             last_frame_time: miniquad::date::now(),
@@ -422,6 +423,23 @@ pub mod test {
 
 fn get_context() -> &'static mut Context {
     unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
+}
+
+/// Asset folder requested before the context existed (the Tauri entry point on
+/// Android calls `set_pc_assets_folder` long before any rendering starts).
+static mut PENDING_PC_ASSETS_FOLDER: Option<String> = None;
+
+pub(crate) fn set_pc_assets_folder_pending(path: &str) {
+    unsafe {
+        match CONTEXT.as_mut() {
+            Some(context) => context.pc_assets_folder = Some(path.to_string()),
+            None => PENDING_PC_ASSETS_FOLDER = Some(path.to_string()),
+        }
+    }
+}
+
+fn take_pending_pc_assets_folder() -> Option<String> {
+    unsafe { PENDING_PC_ASSETS_FOLDER.take() }
 }
 
 fn get_quad_context() -> &'static mut QuadContext {
@@ -707,12 +725,26 @@ impl EventHandler for Stage {
 
     fn window_restored_event(&mut self, _: &mut miniquad::Context) {
         #[cfg(target_os = "android")]
-        get_context().audio_context.resume();
+        {
+            get_context().audio_context.resume();
+            window::notify_lifecycle(true);
+        }
     }
 
     fn window_minimized_event(&mut self, _: &mut miniquad::Context) {
         #[cfg(target_os = "android")]
-        get_context().audio_context.pause();
+        {
+            window::notify_lifecycle(false);
+            get_context().audio_context.pause();
+        }
+    }
+
+    fn destroy_event(&mut self, ctx: &mut miniquad::Context) {
+        set_quad_context(ctx);
+        #[cfg(target_os = "android")]
+        window::set_lifecycle_callback(None);
+        // Drop scenes/audio before the textures and graphics context they depend on.
+        unsafe { MAIN_FUTURE = None; CONTEXT = None; QUAD_CONTEXT = std::ptr::null_mut(); }
     }
 
     fn quit_requested_event(&mut self, ctx: &mut miniquad::Context) {
@@ -755,5 +787,38 @@ impl Window {
                 Box::new(Stage {})
             },
         );
+    }
+
+    pub fn from_config_headless(config: conf::Conf, future: impl Future<Output = ()> + 'static) {
+        let window_size = (
+            config.window_width.max(1) as u32,
+            config.window_height.max(1) as u32,
+        );
+        let ctx = miniquad::Context::new(
+            config.platform.rendering_backend,
+            false,
+            None,
+            window_size,
+        );
+        let ctx: &'static mut miniquad::Context = Box::leak(Box::new(ctx));
+        let ctx_ptr: *mut miniquad::Context = ctx;
+        unsafe {
+            QUAD_CONTEXT = ctx_ptr;
+            CONTEXT = Some(Context::new(&mut *ctx_ptr));
+        }
+        let mut future: Pin<Box<dyn Future<Output = ()>>> = Box::pin(future);
+
+        struct NoopWaker;
+        impl std::task::Wake for NoopWaker {
+            fn wake(self: std::sync::Arc<Self>) {}
+        }
+        let waker = std::task::Waker::from(std::sync::Arc::new(NoopWaker));
+        let mut cx = std::task::Context::from_waker(&waker);
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(()) => break,
+                std::task::Poll::Pending => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
     }
 }

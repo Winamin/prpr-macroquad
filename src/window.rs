@@ -136,3 +136,20 @@ where
 
     crate::get_context().unwind = true;
 }
+#[cfg(target_os = "android")]
+thread_local! {
+    static LIFECYCLE_CALLBACK: std::cell::RefCell<Option<Box<dyn FnMut(bool)>>> = std::cell::RefCell::new(None);
+}
+
+/// Android activity lifecycle notifications, delivered on the rendering thread.
+#[cfg(target_os = "android")]
+pub fn set_lifecycle_callback(callback: Option<Box<dyn FnMut(bool)>>) {
+    LIFECYCLE_CALLBACK.with(|slot| *slot.borrow_mut() = callback);
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn notify_lifecycle(resumed: bool) {
+    LIFECYCLE_CALLBACK.with(|slot| {
+        if let Some(callback) = slot.borrow_mut().as_mut() { callback(resumed); }
+    });
+}

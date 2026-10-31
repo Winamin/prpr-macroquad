@@ -30,9 +30,9 @@ opt-level = 3
 all-features = true
 
 [dependencies]
-# miniquad = { version = "=0.3.14", features = ["log-impl"] }
+#miniquad = { version = "=0.3.14", features = ["log-impl"] }
 #miniquad = { path = "D:/Github/prpr-miniquad", features = ["log-impl", "vulkan"] }
-miniquad = { git = "https://github.com/Winamin/prpr-miniquad.git", features = ["log-impl", "vulkan"] }
+#miniquad = { git = "https://github.com/Winamin/prpr-miniquad.git", features = ["log-impl", "vulkan"] }
 quad-rand = "0.2.3"
 glam = {version = "0.30", features = ["scalar-math"] }
 image = { version = "0.25", default-features = false, features = ["png", "tga", "jpeg"] }
@@ -56,3 +56,15 @@ macroquad = { path = './' }
 
 #miniquad = { path = '../miniquad' }
 #quad-gl = {path = './quad-gl'}
+
+[target.'cfg(target_os = "android")'.dependencies.miniquad]
+git = "https://github.com/Winamin/prpr-miniquad.git"
+branch = "android"
+default-features = false
+features = ["log-impl", "vulkan"]
+
+[target.'cfg(not(target_os = "android"))'.dependencies.miniquad]
+git = "https://github.com/Winamin/prpr-miniquad.git"
+branch = "android"
+default-features = false
+features = ["log-impl", "vulkan"]
