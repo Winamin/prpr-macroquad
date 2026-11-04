@@ -322,6 +322,8 @@ impl Context {
     }
 
     fn begin_frame(&mut self) {
+        #[cfg(feature = "tracy")]
+        let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::begin_frame"));
         telemetry::begin_gpu_query("GPU");
 
         self.ui_context.process_input();
@@ -333,6 +335,8 @@ impl Context {
     }
 
     fn end_frame(&mut self) {
+        #[cfg(feature = "tracy")]
+        let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::end_frame"));
         crate::experimental::scene::update();
 
         self.perform_render_passes();
@@ -627,6 +631,8 @@ impl EventHandler for Stage {
     }
 
     fn update(&mut self, ctx: &mut miniquad::Context) {
+        #[cfg(feature = "tracy")]
+        let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::event_update"));
         set_quad_context(ctx);
         let _z = telemetry::ZoneGuard::new("Event::update");
 
@@ -641,6 +647,8 @@ impl EventHandler for Stage {
     }
 
     fn draw(&mut self, ctx: &mut miniquad::Context) {
+        #[cfg(feature = "tracy")]
+        let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::event_draw"));
         set_quad_context(ctx);
         {
             let _z = telemetry::ZoneGuard::new("Event::draw");
@@ -664,6 +672,8 @@ impl EventHandler for Stage {
             let result = maybe_unwind(get_context().unwind, || {
                 if let Some(future) = unsafe { MAIN_FUTURE.as_mut() } {
                     let _z = telemetry::ZoneGuard::new("Event::draw user code");
+                    #[cfg(feature = "tracy")]
+                    let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::user_code"));
 
                     if exec::resume(future).is_some() {
                         unsafe {

@@ -14,6 +14,7 @@ readme="README.md"
 [features]
 audio = ["quad-snd"]
 log-rs = ["log"]
+tracy = ["miniquad/tracy"]
 default = ["audio"]
 # OpenGL 版本控制
 gl-legacy = []

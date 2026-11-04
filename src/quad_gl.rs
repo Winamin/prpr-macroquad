@@ -749,6 +749,8 @@ impl QuadGl {
     }
 
     pub fn draw(&mut self, ctx: &mut miniquad::Context, projection: glam::Mat4) {
+        #[cfg(feature = "tracy")]
+        let _span = miniquad::tracy::span_with_callstack(miniquad::tracy::span_location!("Macroquad::QuadGl::draw"));
         for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
             let vertex_buffer = Buffer::stream(
                 ctx,
