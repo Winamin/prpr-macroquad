@@ -74,6 +74,27 @@ pub fn load_material(
     Ok(Material { pipeline })
 }
 
+/// Translate material sources without creating a GPU context.
+/// GLSL/ESSL versions are detected per source. Uniform and texture bindings use
+/// the same metadata as load_material, including macroquad's reserved entries.
+pub fn translate_material_shaders(
+    vertex_shader: &str,
+    fragment_shader: &str,
+    params: &MaterialParams,
+) -> Result<(String, String), ShaderError> {
+    let mut meta = crate::quad_gl::shader::meta();
+    for (name, uniform_type) in &params.uniforms {
+        meta.uniforms.uniforms.push(miniquad::UniformDesc::new(name, *uniform_type));
+    }
+    for name in &params.textures {
+        if meta.images.contains(name) {
+            return Err(ShaderError::LinkError(format!("Texture name {} is reserved or duplicated", name)));
+        }
+        meta.images.push(name.clone());
+    }
+    miniquad::vulkan::translate_glsl(vertex_shader, fragment_shader, &meta)
+}
+
 /// All following macroquad rendering calls will use the given material.
 pub fn gl_use_material(material: Material) {
     get_context().gl.pipeline(Some(material.pipeline));

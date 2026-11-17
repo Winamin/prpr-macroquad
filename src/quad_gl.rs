@@ -8,6 +8,66 @@ use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, shader_v
 
 use std::collections::BTreeMap;
 
+const MAX_INDEXED_VERTICES: usize = u16::MAX as usize + 1;
+
+/// Split indexed meshes at primitive boundaries, preserving the order and
+/// attributes of every referenced vertex. Clamping either input separately
+/// can leave indices referring to discarded vertices.
+fn split_indexed_geometry<V: Copy>(
+    vertices: &[V],
+    indices: &[u16],
+    max_vertices: usize,
+    max_indices: usize,
+    primitive_size: usize,
+    mut emit: impl FnMut(&[V], &[u16]),
+) {
+    assert!(max_vertices >= primitive_size && max_indices >= primitive_size);
+    let mut remap = vec![usize::MAX; vertices.len().min(MAX_INDEXED_VERTICES)];
+    let mut batch_vertices = Vec::with_capacity(max_vertices.min(vertices.len()));
+    let mut batch_indices = Vec::with_capacity(max_indices.min(indices.len()));
+    let mut sources = Vec::with_capacity(max_vertices.min(vertices.len()));
+
+    for primitive in indices.chunks_exact(primitive_size) {
+        let new_vertices = primitive.iter().enumerate().filter(|(offset, index)| {
+            remap[**index as usize] == usize::MAX && !primitive[..*offset].contains(index)
+        }).count();
+        if batch_vertices.len() + new_vertices > max_vertices || batch_indices.len() + primitive_size > max_indices {
+            emit(&batch_vertices, &batch_indices);
+            for &source in &sources {
+                remap[source as usize] = usize::MAX;
+            }
+            sources.clear();
+            batch_vertices.clear();
+            batch_indices.clear();
+        }
+        for &source in primitive {
+            let source = source as usize;
+            if remap[source] == usize::MAX {
+                remap[source] = batch_vertices.len();
+                batch_vertices.push(vertices[source]);
+                sources.push(source as u16);
+            }
+            batch_indices.push(remap[source] as u16);
+        }
+    }
+    if !batch_indices.is_empty() {
+        emit(&batch_vertices, &batch_indices);
+    }
+}
+
+fn geometry_fits_draw_call(
+    vertices_count: usize,
+    indices_count: usize,
+    vertices: usize,
+    indices: usize,
+    max_vertices: usize,
+    max_indices: usize,
+) -> bool {
+    vertices <= max_vertices && indices <= max_indices
+        && vertices_count <= max_vertices - vertices
+        && indices_count <= max_indices - indices
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrawMode {
     Triangles,
@@ -33,6 +93,7 @@ struct DrawCall {
     draw_mode: DrawMode,
     pipeline: GlPipeline,
     uniforms: Option<Vec<u8>>,
+    textures: Vec<Texture>,
     render_pass: Option<RenderPass>,
     capture: bool,
 }
@@ -117,6 +178,7 @@ impl DrawCall {
             draw_mode,
             pipeline,
             uniforms,
+            textures: Vec::new(),
             render_pass,
             capture: false,
         }
@@ -812,10 +874,8 @@ impl QuadGl {
                 .images
                 .resize(2 + pipeline.textures.len(), Texture::empty());
 
-            for (pos, name) in pipeline.textures.iter().enumerate() {
-                if let Some(texture) = pipeline.textures_data.get(name).copied() {
-                    bindings.images[2 + pos] = texture;
-                }
+            for (pos, texture) in dc.textures.iter().enumerate() {
+                bindings.images[2 + pos] = *texture;
             }
 
             ctx.apply_pipeline(&pipeline.pipeline);
@@ -839,10 +899,12 @@ impl QuadGl {
             pipeline.set_uniform("Projection", projection);
             pipeline.set_uniform("Model", dc.model);
             pipeline.set_uniform("_Time", time);
-            ctx.apply_uniforms_from_bytes(
-                pipeline.uniforms_data.as_ptr(),
-                pipeline.uniforms_data.len(),
-            );
+            unsafe {
+                ctx.apply_uniforms_from_bytes(
+                    pipeline.uniforms_data.as_ptr(),
+                    pipeline.uniforms_data.len(),
+                );
+            }
             ctx.draw(0, dc.indices_count as i32, 1);
             ctx.end_render_pass();
 
@@ -922,13 +984,23 @@ impl QuadGl {
     }
 
     pub fn geometry(&mut self, vertices: &[impl Into<VertexInterop> + Copy], indices: &[u16]) {
-        if vertices.len() > self.max_vertices || indices.len() > self.max_indices {
-            warn!("geometry() exceeded max drawcall size, clamping");
+        if vertices.is_empty() || indices.is_empty() {
+            return;
         }
+        if vertices.len() > self.max_vertices || indices.len() > self.max_indices {
+            let primitive_size = match self.state.draw_mode {
+                DrawMode::Triangles => 3,
+                DrawMode::Lines => 2,
+            };
+            split_indexed_geometry(vertices, indices, self.max_vertices, self.max_indices, primitive_size, |vertices, indices| {
+                self.geometry_batch(vertices, indices);
+            });
+            return;
+        }
+        self.geometry_batch(vertices, indices);
+    }
 
-        let vertices = &vertices[0..self.max_vertices.min(vertices.len())];
-        let indices = &indices[0..self.max_indices.min(indices.len())];
-
+    fn geometry_batch(&mut self, vertices: &[impl Into<VertexInterop> + Copy], indices: &[u16]) {
         let pip = self.state.pipeline.unwrap_or(
             self.pipelines
                 .get(self.state.draw_mode, self.state.depth_test_enable),
@@ -949,8 +1021,7 @@ impl QuadGl {
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
-                || draw_call.vertices_count >= self.max_vertices - vertices.len()
-                || draw_call.indices_count >= self.max_indices - indices.len()
+                || !geometry_fits_draw_call(draw_call.vertices_count, draw_call.indices_count, vertices.len(), indices.len(), self.max_vertices, self.max_indices)
                 || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
@@ -962,6 +1033,12 @@ impl QuadGl {
                         .clone(),
                 )
             });
+            // Capture custom samplers with the geometry, just like uniforms.
+            // A later set_texture must not change already queued draws.
+            let textures = self.pipelines.get_quad_pipeline_mut(pip);
+            let textures = textures.textures.iter().map(|name| {
+                textures.textures_data.get(name).copied().unwrap_or_else(Texture::empty)
+            }).collect();
 
             if self.draw_calls_count >= self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
@@ -977,6 +1054,7 @@ impl QuadGl {
             }
             self.draw_calls[self.draw_calls_count].texture = self.state.texture;
             self.draw_calls[self.draw_calls_count].uniforms = uniforms;
+            self.draw_calls[self.draw_calls_count].textures = textures;
             self.draw_calls[self.draw_calls_count].vertices_count = 0;
             self.draw_calls[self.draw_calls_count].indices_count = 0;
             self.draw_calls[self.draw_calls_count].clip = self.state.clip;
@@ -1016,6 +1094,7 @@ impl QuadGl {
     }
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
+        self.state.break_batching = true;
         let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
         pipeline
             .textures
@@ -1039,6 +1118,9 @@ impl QuadGl {
         max_vertices: usize,
         max_indices: usize,
     ) {
+        // Indices are u16 and each draw must fit at least one triangle.
+        let max_vertices = max_vertices.clamp(3, MAX_INDEXED_VERTICES);
+        let max_indices = max_indices.max(3);
         self.max_vertices = max_vertices;
         self.max_indices = max_indices;
 
@@ -1067,7 +1149,7 @@ impl QuadGl {
     }
 }
 
-mod shader {
+pub(crate) mod shader {
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
     use crate::shader_version::ShaderVersion;
 
